@@ -1,0 +1,22 @@
+[project]
+name = "Cool-chic"
+version = "5.0.1"
+description = "Cool-chic is a low-complexity neural image and video codec based on overfitting. It achieves state-of-the-art image compression performance, while requiring only 1000 multiplications per decoded pixel."
+readme = "README.md"
+authors = [
+    { name = "Theo Ladune", email = "theo.ladune@orange.com" },
+    { name = "Pierrick Philippe", email = "pierrick.philippe@orange.com" },
+]
+requires-python = ">=3.10"
+dependencies = [
+    "configargparse>=1.7.5",
+    "constriction==0.4.2",
+    "einops>=0.8.2",
+    "fvcore>=0.1.5.post20221221",
+    "matplotlib>=3.10.9",
+    "pytest>=9.1.1",
+    "pytest-order>=1.5.0",
+    "scipy>=1.15.3",
+    "torch>=2.11.0",
+    "torchvision>=0.28.0",
+]

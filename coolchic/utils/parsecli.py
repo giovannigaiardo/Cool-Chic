@@ -9,13 +9,13 @@
 
 import argparse
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from coolchic.io.io import load_frame_data_from_file
 
 
 # ----- Arguments related to Cool-chic parameters
-def _parse_synthesis_layers(layers_synthesis: str) -> Optional[Tuple[List[str], bool]]:
+def _parse_synthesis_layers(layers_synthesis: str) -> tuple[list[str], bool] | None:
     """The layers of the synthesis are presented in as a coma-separated string.
     This simply splits up the different substrings and return them.
 
@@ -46,7 +46,7 @@ def _parse_synthesis_layers(layers_synthesis: str) -> Optional[Tuple[List[str], 
     return parsed_layer_synth, flag_stabiliser
 
 
-def _parse_spatial_arm_archi(spatial_arm: str) -> Dict[str, int]:
+def _parse_spatial_arm_archi(spatial_arm: str) -> dict[str, int]:
     """The spatial arm is described as <n_spatial_context>,<n_hidden_layers_arm>.
     Split up this string to return the value as a dict.
 
@@ -60,7 +60,9 @@ def _parse_spatial_arm_archi(spatial_arm: str) -> Dict[str, int]:
     flag_stabiliser = spatial_arm.endswith("/stabiliser")
     spatial_arm = spatial_arm.replace("/stabiliser", "")
 
-    assert len(spatial_arm.split(",")) == 2, f"--arm format should be X,Y. Found {spatial_arm}"
+    assert len(spatial_arm.split(",")) == 2, (
+        f"--arm format should be X,Y. Found {spatial_arm}"
+    )
 
     spatial_context_arm, n_hidden_layers_arm = [int(x) for x in spatial_arm.split(",")]
     arm_param = {
@@ -79,7 +81,7 @@ def _parse_output_feature_ifce(output_feature_ifce: int) -> int:
     return x
 
 
-def _parse_latent_resolution(latent_resolution: str, n_pixels: int) -> Tuple[int, int]:
+def _parse_latent_resolution(latent_resolution: str, n_pixels: int) -> tuple[int, int]:
 
     # Adaptive lowest resolution: 2^-6 = 1/64 for images with less than 1 million
     # pixels, 1/128 for images with 1 to 3 millions pixel and 1/256 for the bigger images
@@ -99,7 +101,7 @@ def _parse_latent_resolution(latent_resolution: str, n_pixels: int) -> Tuple[int
 
 def _parse_hyperlatent_resolution(
     hyperlatent_resolution: str, n_pixels: int
-) -> Optional[Tuple[int, int]]:
+) -> tuple[int, int] | None:
     if hyperlatent_resolution == "no":
         return None
     elif hyperlatent_resolution == "auto":
@@ -117,7 +119,7 @@ def _parse_hyperlatent_resolution(
         return tuple([int(x) for x in hyperlatent_resolution.split("-") if x != ""])
 
 
-def _parse_ifce_resolution(ifce_resolution: str) -> Optional[Tuple[int, int]]:
+def _parse_ifce_resolution(ifce_resolution: str) -> tuple[int, int] | None:
     if ifce_resolution == "no":
         return None
     else:
@@ -127,7 +129,7 @@ def _parse_ifce_resolution(ifce_resolution: str) -> Optional[Tuple[int, int]]:
 def get_coolchic_param_from_args(
     args: argparse.Namespace,
     coolchic_enc_name: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
 
     # Load the first image of the video to get the number of pixels
     frame = load_frame_data_from_file(args.input, idx_display_order=0)
@@ -154,7 +156,9 @@ def get_coolchic_param_from_args(
         getattr(args, f"hyperlatent_resolution_{coolchic_enc_name}"), n_pixels
     )
 
-    ifce_resolution = _parse_ifce_resolution(getattr(args, f"ifce_resolution_{coolchic_enc_name}"))
+    ifce_resolution = _parse_ifce_resolution(
+        getattr(args, f"ifce_resolution_{coolchic_enc_name}")
+    )
     if ifce_resolution is None and output_feature_ifce != 0:
         print(
             f"--ifce_resolution_{coolchic_enc_name}=no --> Setting --output_feature_ifce_"
@@ -181,7 +185,9 @@ def get_coolchic_param_from_args(
         "linear_stabiliser_synth": linear_stabiliser_synth,
         "latent_resolution": latent_resolution,
         "ups_k_size": getattr(args, f"ups_k_size_{coolchic_enc_name}"),
-        "ups_preconcat_k_size": getattr(args, f"ups_preconcat_k_size_{coolchic_enc_name}"),
+        "ups_preconcat_k_size": getattr(
+            args, f"ups_preconcat_k_size_{coolchic_enc_name}"
+        ),
         "output_feature_ifce": output_feature_ifce,
         "hyperlatent_resolution": hyperlatent_resolution,
         "ifce_resolution": ifce_resolution,
@@ -191,7 +197,9 @@ def get_coolchic_param_from_args(
     }
 
     # Add ARM parameters
-    coolchic_param.update(_parse_spatial_arm_archi(getattr(args, f"arm_{coolchic_enc_name}")))
+    coolchic_param.update(
+        _parse_spatial_arm_archi(getattr(args, f"arm_{coolchic_enc_name}"))
+    )
 
     return coolchic_param
 
@@ -219,7 +227,7 @@ def _is_image(file_path: str) -> bool:
     return False
 
 
-def _parse_frame_pos(frame_pos_str: str, n_frames: int) -> List[int]:
+def _parse_frame_pos(frame_pos_str: str, n_frames: int) -> list[int]:
     """Parse the command line arguments for --intra_pos or --p_pos.
 
     Format:
@@ -267,7 +275,7 @@ def _parse_frame_pos(frame_pos_str: str, n_frames: int) -> List[int]:
     return pos
 
 
-def get_coding_structure_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+def get_coding_structure_from_args(args: argparse.Namespace) -> dict[str, Any]:
     """Perform some check on the argparse object used to collect the command
     line parameters. Return a dictionary ready to be plugged into the
     ``CodingStructure`` constructor.
@@ -282,7 +290,9 @@ def get_coding_structure_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     n_frames = args.n_frames
     frame_offset = args.frame_offset
 
-    assert n_frames > 0, f"There must be at least one frame to encode. Found --n_frames={n_frames}"
+    assert n_frames > 0, (
+        f"There must be at least one frame to encode. Found --n_frames={n_frames}"
+    )
 
     assert frame_offset >= 0, (
         f"Negative frame_offset is not possible. Found --frame_offset={frame_offset}"
@@ -299,13 +309,15 @@ def get_coding_structure_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         "n_frames": n_frames,
         "intra_pos": _parse_frame_pos(args.intra_pos, n_frames),
         "p_pos": _parse_frame_pos(args.p_pos, n_frames),
-        "seq_name": os.path.basename(args.input).split(".")[0] if "input" in args else "",
+        "seq_name": os.path.basename(args.input).split(".")[0]
+        if "input" in args
+        else "",
         "frame_offset": frame_offset,
     }
     return coding_structure_config
 
 
-def get_warp_param_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+def get_warp_param_from_args(args: argparse.Namespace) -> dict[str, Any]:
     """Perform some check on the argparse object used to collect the command
     line parameters. Return a dictionary ready to be plugged into the
     ``WarpParameter`` constructor.
@@ -323,7 +335,7 @@ def get_warp_param_from_args(args: argparse.Namespace) -> Dict[str, Any]:
     return warp_parameter
 
 
-def get_preset_from_args(args: argparse.Namespace) -> Dict[str, Any]:
+def get_preset_from_args(args: argparse.Namespace) -> dict[str, Any]:
     """Perform some check on the argparse object used to collect the command
     line parameters. Return a dictionary ready to be plugged into the
     ``Preset`` constructor.
@@ -347,6 +359,9 @@ def get_preset_from_args(args: argparse.Namespace) -> Dict[str, Any]:
         # Value determined empirically, see
         # "Perceptually optimised Cool-chic for CLIC 2025", Philippe et al.
         dist_weight = {"mse": 0.2, "wasserstein": 0.8 / 200}
+
+    elif args.tune == "ws_mse":
+        dist_weight = {"ws_mse": 1.0}
 
     else:
         raise argparse.ArgumentTypeError(f"Unknown --tune. Found {args.tune}")

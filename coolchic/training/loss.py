@@ -9,7 +9,7 @@
 
 import typing
 from dataclasses import dataclass, field
-from typing import Dict, Literal, Optional, Union
+from typing import Literal
 
 import torch
 from torch import Tensor
@@ -17,8 +17,9 @@ from torch import Tensor
 from coolchic.io.format.yuv import DictTensorYUV
 from coolchic.training.metrics.mse import dist_to_db, mse_fn
 from coolchic.training.metrics.wasserstein import wasserstein_fn
+from coolchic.training.metrics.ws_mse import precompute_erp_weights, ws_mse_fn
 
-DISTORTION_METRIC = Literal["mse", "wasserstein"]
+DISTORTION_METRIC = Literal["mse", "wasserstein", "ws_mse"]
 
 
 @dataclass(kw_only=True)
@@ -28,35 +29,37 @@ class LossFunctionOutput:
     # ----- This is the important output
     # Optional to allow easy inheritance by FrameEncoderLogs
     # but will never be None
-    loss: Optional[float] = None  # The RD cost to optimize
-    dist: Optional[float] = None  # The distorsion cost to optimize along with the rate
-    rate_bpp: Optional[float] = None
+    loss: float | None = None  # The RD cost to optimize
+    dist: float | None = None  # The distorsion cost to optimize along with the rate
+    rate_bpp: float | None = None
 
     # Any other data required to compute some logs, stored inside a dictionary
-    detailed_dist: Optional[Dict[DISTORTION_METRIC, float]] = (
+    detailed_dist: dict[DISTORTION_METRIC, float] | None = (
         None  # Each distortion value (mse, wasserstein...)
     )
-    rate_latent_bpp: Optional[float] = None  # Rate associated to the latent          [bpp]
-    total_rate_nn_bpp: float = 0.0  # Total rate associated to the all NNs of all cool-chic [bpp]
+    rate_latent_bpp: float | None = None  # Rate associated to the latent          [bpp]
+    total_rate_nn_bpp: float = (
+        0.0  # Total rate associated to the all NNs of all cool-chic [bpp]
+    )
 
-    mse_y: Optional[float] = None
-    mse_u: Optional[float] = None
-    mse_v: Optional[float] = None
+    mse_y: float | None = None
+    mse_u: float | None = None
+    mse_v: float | None = None
 
-    psnr_y_db: Optional[float] = field(init=False, default=None)
-    psnr_u_db: Optional[float] = field(init=False, default=None)
-    psnr_v_db: Optional[float] = field(init=False, default=None)
+    psnr_y_db: float | None = field(init=False, default=None)
+    psnr_u_db: float | None = field(init=False, default=None)
+    psnr_v_db: float | None = field(init=False, default=None)
 
     # ==================== Not set by the init function ===================== #
     # Everything here is derived from the above metrics
-    total_rate_latent_bpp: Optional[float] = field(
+    total_rate_latent_bpp: float | None = field(
         init=False, default=None
     )  # Overall rate of all the latents [bpp]
-    dist_db: Optional[float] = None
-    detailed_dist_db: Optional[Dict[DISTORTION_METRIC, float]] = field(
-        init=False, default_factory=lambda: {}
+    dist_db: float | None = None
+    detailed_dist_db: dict[DISTORTION_METRIC, float] | None = field(
+        init=False, default_factory=dict
     )  # Each distortion value (mse, wasserstein...) in dB
-    total_rate_bpp: Optional[float] = field(
+    total_rate_bpp: float | None = field(
         init=False, default=None
     )  # Overall rate: latent & NNs      [bpp]
     # ==================== Not set by the init function ===================== #
@@ -64,9 +67,16 @@ class LossFunctionOutput:
     def __post_init__(self):
         # Compute some dB values from distortion
         if self.detailed_dist is not None:
-            self.detailed_dist_db["psnr_db"] = dist_to_db(self.detailed_dist["mse"])
+            try:
+                self.detailed_dist_db["psnr_db"] = dist_to_db(self.detailed_dist["mse"])
+            except KeyError:
+                self.detailed_dist_db["psnr_db"] = dist_to_db(
+                    self.detailed_dist["ws_mse"]
+                )
             if "wasserstein" in self.detailed_dist:
-                self.detailed_dist_db["wd_db"] = dist_to_db(self.detailed_dist["wasserstein"])
+                self.detailed_dist_db["wd_db"] = dist_to_db(
+                    self.detailed_dist["wasserstein"]
+                )
 
         self.dist_db = dist_to_db(self.dist)
 
@@ -85,7 +95,7 @@ class LossFunctionOutput:
         self.total_rate_bpp = self.total_rate_latent_bpp + self.total_rate_nn_bpp
 
 
-def _compute_mse(x: Union[Tensor, DictTensorYUV], y: Union[Tensor, DictTensorYUV]) -> Tensor:
+def _compute_mse(x: Tensor | DictTensorYUV, y: Tensor | DictTensorYUV) -> Tensor:
     """Compute the Mean Squared Error between two images. Both images can
     either be a single tensor, or a dictionary of tensors with one for each
     color channel. In case of images with multiple channels, the final MSE
@@ -119,7 +129,7 @@ def _compute_mse(x: Union[Tensor, DictTensorYUV], y: Union[Tensor, DictTensorYUV
 
 
 def _compute_wasserstein(
-    decoded_img: Union[Tensor, DictTensorYUV], target_img: Union[Tensor, DictTensorYUV]
+    decoded_img: Tensor | DictTensorYUV, target_img: Tensor | DictTensorYUV
 ) -> Tensor:
     """Compute the Wasserstein distance between two images. Both images can
     either be a single tensor, or a dictionary of tensors with one for each
@@ -155,11 +165,31 @@ def _compute_wasserstein(
     return wd
 
 
+def _compute_ws_mse(x: Tensor | DictTensorYUV, y: Tensor | DictTensorYUV) -> Tensor:
+
+    flag_420 = not (isinstance(x, Tensor))
+    _weights = precompute_erp_weights(x.shape[2])
+    if not flag_420:
+        return ws_mse_fn(x, y, _weights)
+    else:
+        # Total number of pixels for all channels
+        total_pixels_yuv = 0.0
+
+        # MSE weighted by the number of pixels in each channels
+        mse = torch.zeros((1), device=x.get("y").device)
+        for (_, x_channel), (_, y_channel) in zip(x.items(), y.items()):
+            n_pixels_channel = x_channel.numel()
+            mse = mse + ws_mse_fn(x_channel, y_channel, _weights) * n_pixels_channel
+            total_pixels_yuv += n_pixels_channel
+        mse = mse / total_pixels_yuv
+        return mse
+
+
 def loss_function(
-    decoded_image: Union[Tensor, DictTensorYUV],
-    rate_latent_bit: Dict[str, Tensor],
-    target_image: Union[Tensor, DictTensorYUV],
-    dist_weight: Dict[DISTORTION_METRIC, float],
+    decoded_image: Tensor | DictTensorYUV,
+    rate_latent_bit: dict[str, Tensor],
+    target_image: Tensor | DictTensorYUV,
+    dist_weight: dict[DISTORTION_METRIC, float],
     lmbda: float = 1e-3,
     total_rate_nn_bit: float = 0.0,
     compute_logs: bool = False,
@@ -168,14 +198,14 @@ def loss_function(
 
     .. math::
 
-        \\mathcal{L} = \\mathrm{D}(\hat{\\mathbf{x}}, \\mathbf{x}) + \\lambda
-        (\\mathrm{R}(\hat{\\mathbf{x}}) + \\mathrm{R}_{NN}), \\text{ with }
+        \\mathcal{L} = \\mathrm{D}(\\hat{\\mathbf{x}}, \\mathbf{x}) + \\lambda
+        (\\mathrm{R}(\\hat{\\mathbf{x}}) + \\mathrm{R}_{NN}), \\text{ with }
         \\begin{cases}
             \\mathbf{x} & \\text{the original image}\\\\ \\hat{\\mathbf{x}} &
             \\text{the coded image}\\\\ \\mathrm{R}(\\hat{\\mathbf{x}}) &
             \\text{A measure of the rate of } \\hat{\\mathbf{x}} \\\\
                 \\mathrm{R}_{NN} & \\text{The rate of the neural networks}\\\\
-            \\mathrm{D}(\hat{\\mathbf{x}}, \\mathbf{x})  & \\text{A distortion
+            \\mathrm{D}(\\hat{\\mathbf{x}}, \\mathbf{x})  & \\text{A distortion
             metric specified by \\texttt{--tune} and \\texttt{--alpha}}
         \\end{cases}
 
@@ -226,6 +256,8 @@ def loss_function(
             cur_dist = _compute_mse(decoded_image, target_image)
         elif dist_name == "wasserstein":
             cur_dist = _compute_wasserstein(decoded_image, target_image)
+        elif dist_name == "ws_mse":
+            cur_dist = _compute_ws_mse(decoded_image, target_image)
         else:
             raise ValueError(
                 f"Unsupported distortion metrics. Found {dist_name}, available "
@@ -241,7 +273,9 @@ def loss_function(
     else:
         n_pixels = decoded_image.size()[-2] * decoded_image.size()[-1]
 
-    total_rate_latent_bit = torch.cat([v.sum().view(1) for _, v in rate_latent_bit.items()]).sum()
+    total_rate_latent_bit = torch.cat(
+        [v.sum().view(1) for _, v in rate_latent_bit.items()]
+    ).sum()
     rate_bpp = total_rate_latent_bit + total_rate_nn_bit
     rate_bpp = rate_bpp / n_pixels
 
@@ -266,9 +300,21 @@ def loss_function(
             all_dists[k] = v.detach().item()
 
         if flag_yuv420:
-            mse_y = _compute_mse(decoded_image.get("y"), target_image.get("y")).detach().item()
-            mse_u = _compute_mse(decoded_image.get("u"), target_image.get("u")).detach().item()
-            mse_v = _compute_mse(decoded_image.get("v"), target_image.get("v")).detach().item()
+            mse_y = (
+                _compute_mse(decoded_image.get("y"), target_image.get("y"))
+                .detach()
+                .item()
+            )
+            mse_u = (
+                _compute_mse(decoded_image.get("u"), target_image.get("u"))
+                .detach()
+                .item()
+            )
+            mse_v = (
+                _compute_mse(decoded_image.get("v"), target_image.get("v"))
+                .detach()
+                .item()
+            )
 
     output = LossFunctionOutput(
         loss=loss,

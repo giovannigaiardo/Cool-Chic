@@ -367,10 +367,6 @@ dependencies = [
     { name = "constriction" },
     { name = "einops" },
     { name = "fvcore" },
-    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "pytest" },
-    { name = "pytest-order" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -381,6 +377,10 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "ipykernel" },
+    { name = "matplotlib", version = "3.10.9", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
+    { name = "matplotlib", version = "3.11.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "pytest" },
+    { name = "pytest-order" },
 ]
 
 [package.metadata]
@@ -389,16 +389,18 @@ requires-dist = [
     { name = "constriction", specifier = "==0.4.2" },
     { name = "einops", specifier = ">=0.8.2" },
     { name = "fvcore", specifier = ">=0.1.5.post20221221" },
-    { name = "matplotlib", specifier = ">=3.10.9" },
-    { name = "pytest", specifier = ">=9.1.1" },
-    { name = "pytest-order", specifier = ">=1.5.0" },
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "torchvision", specifier = ">=0.28.0" },
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "ipykernel", specifier = ">=7.3.0" }]
+dev = [
+    { name = "ipykernel", specifier = ">=7.3.0" },
+    { name = "matplotlib", specifier = ">=3.10.9" },
+    { name = "pytest", specifier = ">=9.1.1" },
+    { name = "pytest-order", specifier = ">=1.5.0" },
+]
 
 [[package]]
 name = "cuda-bindings"

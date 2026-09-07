@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 BASE_COMMAND = ["python3", "./cc_encode.py"]
 N_ITR = int(1e4)
-losses = typing.get_args(DISTORTION_METRIC)
 lmbdas = np.logspace(-5, -1, num=7)
 
 
@@ -51,10 +50,17 @@ def create_parser() -> ArgumentParser:
         type=Path,
         default="./test",
     )
+    parser.add_argument(
+        "-l",
+        "--losses",
+        nargs="+",
+        default=list(typing.get_args(DISTORTION_METRIC)),
+        help="List of loss functions to evaluate",
+    )
     return parser
 
 
-def build_commands(input_folder: Path, output_folder: Path) -> list:
+def build_commands(input_folder: Path, output_folder: Path, losses: list) -> list:
     commands = []
     for loss, lmbda, img in product(losses, lmbdas, input_folder.rglob("*.png")):
         experiment_name = f"{loss}_{lmbda:.1e}_{img.stem}"
@@ -97,7 +103,7 @@ def run_commands(commands: list):
 
 def main():
     args = create_parser().parse_args()
-    commands = build_commands(args.input_folder, args.output_folder)
+    commands = build_commands(args.input_folder, args.output_folder, args.losses)
     run_commands(commands)
 
 

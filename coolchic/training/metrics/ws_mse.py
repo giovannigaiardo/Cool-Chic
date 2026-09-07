@@ -10,4 +10,5 @@ def precompute_erp_weights(height, device="cpu", dtype=torch.float32):
 
 def ws_mse_fn(x: Tensor, y: Tensor, weight_map: Tensor) -> Tensor:
     square_error = (x - y).square()
+    weight_map = weight_map.to(square_error.device)
     return (square_error * weight_map).sum() / weight_map.sum()

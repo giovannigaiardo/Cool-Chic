@@ -2,7 +2,7 @@ import logging
 import subprocess
 import typing
 from argparse import ArgumentParser
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from itertools import product
 from pathlib import Path
 
@@ -12,6 +12,8 @@ from tqdm.contrib.logging import logging_redirect_tqdm
 
 from coolchic.training.loss import DISTORTION_METRIC
 
+UTC = timezone.utc
+
 script_dir = Path(__file__).resolve().parent
 log_file = script_dir / f"./{datetime.now(tz=UTC).timestamp()}.log"
 
@@ -19,7 +21,10 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
-    handlers=[logging.FileHandler(log_file)],
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 

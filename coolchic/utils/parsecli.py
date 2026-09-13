@@ -366,6 +366,9 @@ def get_preset_from_args(args: argparse.Namespace) -> dict[str, Any]:
     elif args.tune == "ssim":
         dist_weight = {"ssim": 1.0}
 
+    elif args.tune == "ws_ssim":
+        dist_weight = {"ws_ssim": 1.0}
+
     else:
         raise argparse.ArgumentTypeError(f"Unknown --tune. Found {args.tune}")
 

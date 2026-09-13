@@ -20,7 +20,7 @@ from coolchic.training.metrics.ssim import ssim_fn
 from coolchic.training.metrics.wasserstein import wasserstein_fn
 from coolchic.training.metrics.ws_mse import precompute_erp_weights, ws_mse_fn
 
-DISTORTION_METRIC = Literal["mse", "wasserstein", "ws_mse", "ssim"]
+DISTORTION_METRIC = Literal["mse", "wasserstein", "ws_mse", "ssim", "ws_ssim"]
 
 
 @dataclass(kw_only=True)
@@ -75,9 +75,13 @@ class LossFunctionOutput:
                     self.detailed_dist_db["psnr_db"] = dist_to_db(
                         self.detailed_dist["ws_mse"]
                     )
-                else:
+                elif "ssim" in self.detailed_dist:
                     self.detailed_dist_db["psnr_db"] = dist_to_db(
                         self.detailed_dist["ssim"]
+                    )
+                else:
+                    self.detailed_dist_db["psnr_db"] = dist_to_db(
+                        self.detailed_dist["ws_ssim"]
                     )
             if "wasserstein" in self.detailed_dist:
                 self.detailed_dist_db["wd_db"] = dist_to_db(
@@ -208,6 +212,27 @@ def _compute_ssim(x: Tensor | DictTensorYUV, y: Tensor | DictTensorYUV) -> Tenso
     return 1.0 - ssim
 
 
+def _compute_ws_ssim(x: Tensor | DictTensorYUV, y: Tensor | DictTensorYUV) -> Tensor:
+    flag_420 = not (isinstance(x, Tensor))
+    _weights = precompute_erp_weights(x.shape[2])
+
+    if not flag_420:
+        ssim = ssim_fn(x, y, weight_map=_weights)
+    else:
+        total_pixels_yuv = 0.0
+        ssim = torch.zeros((1), device=x.get("y").device)
+        for (_, x_channel), (_, y_channel) in zip(x.items(), y.items()):
+            n_pixels_channel = x_channel.numel()
+            ssim = (
+                ssim
+                + ssim_fn(x_channel, y_channel, weight_map=_weights) * n_pixels_channel
+            )
+            total_pixels_yuv += n_pixels_channel
+        ssim = ssim / total_pixels_yuv
+
+    return 1.0 - ssim
+
+
 def loss_function(
     decoded_image: Tensor | DictTensorYUV,
     rate_latent_bit: dict[str, Tensor],
@@ -283,6 +308,8 @@ def loss_function(
             cur_dist = _compute_ws_mse(decoded_image, target_image)
         elif dist_name == "ssim":
             cur_dist = _compute_ssim(decoded_image, target_image)
+        elif dist_name == "ws_ssim":
+            cur_dist = _compute_ws_ssim(decoded_image, target_image)
         else:
             raise ValueError(
                 f"Unsupported distortion metrics. Found {dist_name}, available "

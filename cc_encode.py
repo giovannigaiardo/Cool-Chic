@@ -151,6 +151,14 @@ if __name__ == "__main__":
         default="mse",
         choices=typing.get_args(DISTORTION_METRIC),
     )
+    parser.add(
+        "--alpha",
+        help="Mixing weight for --tune=ws_ssim: distortion becomes "
+        "(1-alpha)*ws_mse + alpha*ws_ssim (perceptual share). "
+        "alpha=0 is pure ws_mse fidelity, alpha=1 is pure ws_ssim.",
+        type=float,
+        default=0.5,
+    )
 
     parser.add("--debug", action="store_true", help="Extremely quick training")
 

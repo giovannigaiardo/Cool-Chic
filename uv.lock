@@ -367,6 +367,7 @@ dependencies = [
     { name = "constriction" },
     { name = "einops" },
     { name = "fvcore" },
+    { name = "piq" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
@@ -389,6 +390,7 @@ requires-dist = [
     { name = "constriction", specifier = "==0.4.2" },
     { name = "einops", specifier = ">=0.8.2" },
     { name = "fvcore", specifier = ">=0.1.5.post20221221" },
+    { name = "piq", specifier = ">=0.8.0" },
     { name = "scipy", specifier = ">=1.15.3" },
     { name = "torch", specifier = ">=2.11.0" },
     { name = "torchvision", specifier = ">=0.28.0" },
@@ -1723,6 +1725,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/bf/20/22fe9384b7949e25fb1293bcfc84fb82590ff4ea6b37c95b24d26d793d86/pillow-12.3.0-pp311-pypy311_pp73-manylinux_2_27_aarch64.manylinux_2_28_aarch64.whl", hash = "sha256:fbd139c8447d25dd750ab79ee274cc5e1fe80fc56340ab10b18a195e1b6eca3e", size = 5237776, upload-time = "2026-07-01T11:56:30.263Z" },
     { url = "https://files.pythonhosted.org/packages/08/14/f6ba68107680ffa74b39985f3f30884e41318fbc4250caa423c79b4788bb/pillow-12.3.0-pp311-pypy311_pp73-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e7e480451b9fa137494bccd3a7d69adbe8ac65a87d97be61e11f1b1050a5bac3", size = 5860358, upload-time = "2026-07-01T11:56:32.68Z" },
     { url = "https://files.pythonhosted.org/packages/36/54/0169bc772ec491108b62f644f8ecf1fe5d8ae5ebafde2ee2142210166903/pillow-12.3.0-pp311-pypy311_pp73-win_amd64.whl", hash = "sha256:04f01d28a6aaff387bf842a13be313df23ba0597a44f1a976c9feb3c6ff4711a", size = 7231786, upload-time = "2026-07-01T11:56:35.046Z" },
+]
+
+[[package]]
+name = "piq"
+version = "0.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "torchvision" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8a/ae/9274f8e3f216759311a460a896594f04aade8a9f1171c0a732cc613c3b21/piq-0.8.0.tar.gz", hash = "sha256:ea74938ce11845d63fed3185694cdf9641f85bd19718dc3394f8008811b847d4", size = 91316, upload-time = "2023-07-04T21:28:05.877Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/49/e198c355bc01a1bb3aff5d41a8fe7c8a0502ad7a4063865d2c9dd270cb0f/piq-0.8.0-py3-none-any.whl", hash = "sha256:bad83f8e68bad6c09df09c2bdf50d1e8ccf5e852d7b64562317c27ed5eb63159", size = 106872, upload-time = "2023-07-04T21:28:03.532Z" },
 ]
 
 [[package]]

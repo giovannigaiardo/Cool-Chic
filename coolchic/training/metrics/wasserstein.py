@@ -6,7 +6,6 @@
 #
 # Authors: see CONTRIBUTORS.md
 
-from typing import List, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -44,15 +43,15 @@ def safe_clamp_min(x: Tensor, min: float = 0.0) -> Tensor:
 
 class Vgg16(torch.nn.Module):
     def __init__(self):
-        super(Vgg16, self).__init__()
+        super().__init__()
 
         # Select features right before MaxPool2d. I could add 29 to the list
         self.desired_ft = [3, 8, 15, 22]
 
         # I don't need to go through the last layer after the desired features
-        features = list(torchvision.models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features)[
-            : max(self.desired_ft) + 1
-        ]
+        features = list(
+            torchvision.models.vgg16(weights=VGG16_Weights.IMAGENET1K_V1).features
+        )[: max(self.desired_ft) + 1]
         self.device = "cpu"
         self.features = torch.nn.ModuleList(features).eval()
 
@@ -73,14 +72,23 @@ class Vgg16(torch.nn.Module):
 
 
 class WassersteinLoss(nn.Module):
-    def __init__(self):
-        super(WassersteinLoss, self).__init__()
+    def __init__(
+        self,
+        spherical: bool = False,
+        sigma_eq: float = 1.0,
+        sigma_pole: float = 4.0,
+    ):
+        super().__init__()
         self.wd_net = Vgg16()
         self.device = "cpu"
         self.lowpass_2d_kernel = torch.outer(
             torch.tensor([0.25, 0.5, 0.25]), torch.tensor([0.25, 0.5, 0.25])
         ).view(1, 1, 3, 3)
         self.target_features = None
+
+        self.spherical = spherical
+        self.sigma_eq = sigma_eq
+        self.sigma_pole = sigma_pole
 
     def to_device(self, device) -> None:
         self.wd_net = self.wd_net.to(device)
@@ -105,12 +113,12 @@ class WassersteinLoss(nn.Module):
 
     def multi_wasserstein_distortion(
         self,
-        decoded_features: List[Tensor],
-        target_features: List[Tensor],
-        img_size: Tuple[int, int],
+        decoded_features: list[Tensor],
+        target_features: list[Tensor],
+        img_size: tuple[int, int],
         log2_sigma: int = 3,
         num_levels: int = 5,
-    ) -> Union[Tensor, Tuple[Tensor, dict[str, Tensor]]]:
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """Wasserstein Distortion between multiple feature arrays of two images.
 
         This function accepts more than one feature array per image. The arrays don't
@@ -149,8 +157,11 @@ class WassersteinLoss(nn.Module):
                     f"Found feature arrays with incompatible sizes. A: {fa.size()}, B: {fb.size()}."
                 )
 
-            # For now: log2_sigma is constant
-            ls = torch.ones((1, 1, *fa.size()[-2:]), device=device) * log2_sigma
+            if self.spherical:
+                ls = self.latitude_log2_sigma(fa)
+            else:
+                # For now: log2_sigma is constant
+                ls = torch.ones((1, 1, *fa.size()[-2:]), device=device) * log2_sigma
 
             # This is aligned with the original codex implementation. It's been found
             # to be slightly worse than just letting the ls to log2_sigma for all
@@ -177,13 +188,22 @@ class WassersteinLoss(nn.Module):
 
         return dist
 
+    def latitude_log2_sigma(self, feature_array: Tensor) -> Tensor:
+        fh, fw = feature_array.size()[-2:]
+        device, dtype = feature_array.device, feature_array.dtype
+        # cos(phi) per row, shape (1, 1, fh, 1)
+        j = torch.arange(fh, device=device, dtype=dtype)
+        cos_phi = torch.cos((j + 0.5 - fh / 2.0) * torch.pi / fh).view(1, 1, fh, 1)
+        sigma_rows = self.sigma_pole + (self.sigma_eq - self.sigma_pole) * cos_phi
+        return sigma_rows.expand(1, 1, fh, fw).contiguous()
+
     def wasserstein_distortion(
         self,
         decoded_features: Tensor,
         target_features: Tensor,
         log2_sigma: Tensor,
         num_levels: int = 5,
-    ) -> Union[Tensor, tuple[Tensor, dict[str, Tensor]]]:
+    ) -> Tensor | tuple[Tensor, dict[str, Tensor]]:
         """Evaluates Wasserstein Distortion between two feature arrays.
 
         Args:
@@ -212,8 +232,12 @@ class WassersteinLoss(nn.Module):
                 f"{decoded_features.shape} and {target_features.shape}, respectively."
             )
 
-        means_a, variances_a = self.compute_multiscale_stats(decoded_features, num_levels)
-        means_b, variances_b = self.compute_multiscale_stats(target_features, num_levels)
+        means_a, variances_a = self.compute_multiscale_stats(
+            decoded_features, num_levels
+        )
+        means_b, variances_b = self.compute_multiscale_stats(
+            target_features, num_levels
+        )
 
         assert len(means_a) == len(means_b) == len(variances_a) == len(variances_b)
 
@@ -272,7 +296,7 @@ class WassersteinLoss(nn.Module):
         self,
         features: Tensor,
         num_levels: int,
-    ) -> tuple[List[Tensor], list[Tensor]]:
+    ) -> tuple[list[Tensor], list[Tensor]]:
         """Computes local mean and variance of a feature array."""
         squared = torch.square(features)
         means = []
@@ -289,26 +313,41 @@ class WassersteinLoss(nn.Module):
 
 # Global wasserstein_loss_module so that is is built only once
 wasserstein_loss_module = None
+wasserstein_loss_module_spherical = None
 
 
-def wasserstein_fn(decoded_img: Tensor, target_img: Tensor) -> Tensor:
+def wasserstein_fn(
+    decoded_img: Tensor, target_img: Tensor, spherical: bool = False
+) -> Tensor:
     """Compute the wasserstein distance between two [1, 3, H, W] tensors.
     Dynamic range of the tensors is assumed to be [0., 1.]
 
     Args:
         decoded_img: Compressed image
         target_img: Reference image
+        spherical: When True, use a latitude-driven ``log2_sigma`` map (ERP
+            spherical weighting) instead of a constant one.
 
     Returns:
         Tensor: Wasserstein distance (scalar value).
     """
 
-    global wasserstein_loss_module
+    global wasserstein_loss_module, wasserstein_loss_module_spherical
 
-    if wasserstein_loss_module is None:
-        wasserstein_loss_module = torch.compile(WassersteinLoss(), disable=True)
+    if spherical:
+        if wasserstein_loss_module_spherical is None:
+            wasserstein_loss_module_spherical = torch.compile(
+                WassersteinLoss(spherical=True), disable=True
+            )
+        module = wasserstein_loss_module_spherical
+    else:
+        if wasserstein_loss_module is None:
+            wasserstein_loss_module = torch.compile(
+                WassersteinLoss(spherical=False), disable=True
+            )
+        module = wasserstein_loss_module
 
-    if decoded_img.device != wasserstein_loss_module.device:
-        wasserstein_loss_module.to_device(decoded_img.device)
+    if decoded_img.device != module.device:
+        module.to_device(decoded_img.device)
 
-    return wasserstein_loss_module(decoded_img, target_img)
+    return module(decoded_img, target_img)

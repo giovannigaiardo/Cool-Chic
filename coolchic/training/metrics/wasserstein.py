@@ -75,8 +75,9 @@ class WassersteinLoss(nn.Module):
     def __init__(
         self,
         spherical: bool = False,
-        sigma_eq: float = 1.0,
-        sigma_pole: float = 4.0,
+        sigma_max: float = 4.0,
+        sigma_gaze_deg: float = 20.0,
+        p_min: float = 0.5,
     ):
         super().__init__()
         self.wd_net = Vgg16()
@@ -87,8 +88,9 @@ class WassersteinLoss(nn.Module):
         self.target_features = None
 
         self.spherical = spherical
-        self.sigma_eq = sigma_eq
-        self.sigma_pole = sigma_pole
+        self.sigma_max = sigma_max
+        self.sigma_gaze_deg = sigma_gaze_deg
+        self.p_min = p_min
 
     def to_device(self, device) -> None:
         self.wd_net = self.wd_net.to(device)
@@ -193,9 +195,24 @@ class WassersteinLoss(nn.Module):
         device, dtype = feature_array.device, feature_array.dtype
         # cos(phi) per row, shape (1, 1, fh, 1)
         j = torch.arange(fh, device=device, dtype=dtype)
-        cos_phi = torch.cos((j + 0.5 - fh / 2.0) * torch.pi / fh).view(1, 1, fh, 1)
-        sigma_rows = self.sigma_pole + (self.sigma_eq - self.sigma_pole) * cos_phi
-        return sigma_rows.expand(1, 1, fh, fw).contiguous()
+        phi = (j + 0.5 - fh / 2.0) * (torch.pi / fh)
+        cos_phi = torch.cos(phi)
+
+        sigma_gaze_rad = torch.tensor(
+            self.sigma_gaze_deg * torch.pi / 180.0, device=device, dtype=dtype
+        )
+        gaze_gaussian = torch.exp(-(phi**2) / (2.0 * sigma_gaze_rad**2))
+        s = cos_phi * gaze_gaussian
+
+        s_bar = torch.mean(s)
+        p = self.p_min + (1.0 - self.p_min) * (s / s_bar)
+
+        sigma = self.sigma_max * (self.p_min / p)
+
+        sigma = torch.clamp_min(sigma, min=1.0)
+        log2_sigma_rows = torch.log2(sigma)
+
+        return log2_sigma_rows.view(1, 1, fh, 1).expand(1, 1, fh, fw).contiguous()
 
     def wasserstein_distortion(
         self,
@@ -268,7 +285,16 @@ class WassersteinLoss(nn.Module):
             assert wd_map.size()[-2:] == log2_sigma.size()[-2:]
             weight = F.relu(1 - abs(log2_sigma - i))
             # intermediates["weights"].append(weight)
-            dist = dist + torch.mean(weight * wd_map)
+            if self.spherical:
+                h_curr = wd_map.size(-2)
+                j = torch.arange(h_curr, device=wd_map.device, dtype=wd_map.dtype)
+                phi = (j + 0.5 - h_curr / 2.0) * (torch.pi / h_curr)
+                cos_phi = torch.cos(phi).view(1, 1, h_curr, 1)
+
+                cos_weight = cos_phi / torch.mean(cos_phi)
+                dist = dist + torch.mean(weight * wd_map * cos_weight)
+            else:
+                dist = dist + torch.mean(weight * wd_map)
 
             if i > 0:
                 log2_sigma = self.lowpass(log2_sigma, stride=2)

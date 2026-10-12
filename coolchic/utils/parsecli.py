@@ -167,8 +167,11 @@ def get_coolchic_param_from_args(
         output_feature_ifce = 0
 
     # Common randomness only for the residue if we want to optimize
-    # the wasserstein distance.
-    if coolchic_enc_name == "residue" and args.tune == "wasserstein":
+    # the wasserstein distance (constant-sigma or spherical variant).
+    if coolchic_enc_name == "residue" and args.tune in (
+        "wasserstein",
+        "ws_wasserstein",
+    ):
         flag_common_randomness = True
     else:
         flag_common_randomness = False
@@ -359,6 +362,14 @@ def get_preset_from_args(args: argparse.Namespace) -> dict[str, Any]:
         # Value determined empirically, see
         # "Perceptually optimised Cool-chic for CLIC 2025", Philippe et al.
         dist_weight = {"mse": 0.2, "wasserstein": 0.8 / 200}
+
+    elif args.tune == "ws_wasserstein":
+        if args.input.endswith(".yuv"):
+            raise argparse.ArgumentTypeError(
+                "--tune=ws_wasserstein can not be used with YUV files. Use --tune=mse"
+            )
+
+        dist_weight = {"mse": 0.2, "ws_wasserstein": 0.8 / 200}
 
     elif args.tune == "ws_mse":
         dist_weight = {"ws_mse": 1.0}

@@ -20,7 +20,9 @@ from coolchic.training.metrics.ssim import ssim_fn
 from coolchic.training.metrics.wasserstein import wasserstein_fn
 from coolchic.training.metrics.ws_mse import precompute_erp_weights, ws_mse_fn
 
-DISTORTION_METRIC = Literal["mse", "wasserstein", "ws_mse", "ssim", "ws_ssim"]
+DISTORTION_METRIC = Literal[
+    "mse", "wasserstein", "ws_wasserstein", "ws_mse", "ssim", "ws_ssim"
+]
 
 
 @dataclass(kw_only=True)
@@ -139,7 +141,9 @@ def _compute_mse(x: Tensor | DictTensorYUV, y: Tensor | DictTensorYUV) -> Tensor
 
 
 def _compute_wasserstein(
-    decoded_img: Tensor | DictTensorYUV, target_img: Tensor | DictTensorYUV
+    decoded_img: Tensor | DictTensorYUV,
+    target_img: Tensor | DictTensorYUV,
+    spherical: bool = False,
 ) -> Tensor:
     """Compute the Wasserstein distance between two images. Both images can
     either be a single tensor, or a dictionary of tensors with one for each
@@ -151,6 +155,8 @@ def _compute_wasserstein(
     Args:
         x (Union[Tensor, DictTensorYUV]): One of the two inputs
         y (Union[Tensor, DictTensorYUV]): The other input
+        spherical (bool): When True, use the latitude-driven (ERP spherical)
+            log2_sigma weighting instead of a constant one.
 
     Returns:
         Tensor: One element tensor containing the WD of x and y.
@@ -158,7 +164,7 @@ def _compute_wasserstein(
     flag_420 = not (isinstance(decoded_img, Tensor))
 
     if not flag_420:
-        wd = wasserstein_fn(decoded_img, target_img)
+        wd = wasserstein_fn(decoded_img, target_img, spherical=spherical)
     else:
         # Total number of pixels for all channels
         total_pixels_yuv = 0.0
@@ -169,7 +175,13 @@ def _compute_wasserstein(
             decoded_img.items(), target_img.items()
         ):
             n_pixels_channel = decoded_channel.numel()
-            wd = wd + wasserstein_fn(decoded_channel, target_channel) * n_pixels_channel
+            wd = (
+                wd
+                + wasserstein_fn(
+                    decoded_channel, target_channel, spherical=spherical
+                )
+                * n_pixels_channel
+            )
             total_pixels_yuv += n_pixels_channel
         wd = wd / total_pixels_yuv
     return wd
@@ -304,6 +316,10 @@ def loss_function(
             cur_dist = _compute_mse(decoded_image, target_image)
         elif dist_name == "wasserstein":
             cur_dist = _compute_wasserstein(decoded_image, target_image)
+        elif dist_name == "ws_wasserstein":
+            cur_dist = _compute_wasserstein(
+                decoded_image, target_image, spherical=True
+            )
         elif dist_name == "ws_mse":
             cur_dist = _compute_ws_mse(decoded_image, target_image)
         elif dist_name == "ssim":

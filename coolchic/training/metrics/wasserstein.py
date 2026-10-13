@@ -95,9 +95,9 @@ class WassersteinLoss(nn.Module):
     def __init__(
         self,
         mode: SphericalMode = SphericalMode.NONE,
-        sigma_max: float = 4.0,
+        sigma_min: float = 3.0,
+        sigma_max: float = 24.0,
         sigma_gaze_deg: float = 20.0,
-        p_min: float = 0.5,
     ):
         super().__init__()
         self.wd_net = Vgg16()
@@ -109,8 +109,8 @@ class WassersteinLoss(nn.Module):
 
         self.mode = mode
         self.sigma_max = sigma_max
+        self.sigma_min = sigma_min
         self.sigma_gaze_deg = sigma_gaze_deg
-        self.p_min = p_min
 
     def to_device(self, device) -> None:
         self.wd_net = self.wd_net.to(device)
@@ -224,12 +224,9 @@ class WassersteinLoss(nn.Module):
         gaze_gaussian = torch.exp(-(phi**2) / (2.0 * sigma_gaze_rad**2))
         s = cos_phi * gaze_gaussian
 
-        s_bar = torch.mean(s)
-        p = self.p_min + (1.0 - self.p_min) * (s / s_bar)
+        s_norm = (s - s.min()) / (s.max() - s.min() + 1e-7)
 
-        sigma = self.sigma_max * (self.p_min / p)
-
-        sigma = torch.clamp_min(sigma, min=1.0)
+        sigma = self.sigma_max - s_norm * (self.sigma_max - self.sigma_min)
         log2_sigma_rows = torch.log2(sigma)
 
         return log2_sigma_rows.view(1, 1, fh, 1).expand(1, 1, fh, fw).contiguous()

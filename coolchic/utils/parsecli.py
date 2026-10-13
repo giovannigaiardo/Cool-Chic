@@ -171,6 +171,8 @@ def get_coolchic_param_from_args(
     if coolchic_enc_name == "residue" and args.tune in (
         "wasserstein",
         "ws_wasserstein",
+        "ws_wasserstein_sigma",
+        "ws_wasserstein_cos",
     ):
         flag_common_randomness = True
     else:
@@ -371,6 +373,20 @@ def get_preset_from_args(args: argparse.Namespace) -> dict[str, Any]:
 
         dist_weight = {"mse": 0.2, "ws_wasserstein": 0.8 / 200}
 
+    elif args.tune == "ws_wasserstein_sigma":
+        if args.input.endswith(".yuv"):
+            raise argparse.ArgumentTypeError(
+                "--tune=ws_wasserstein_sigma can not be used with YUV files. Use --tune=mse"
+            )
+        dist_weight = {"mse": 0.2, "ws_wasserstein_sigma": 0.8 / 200}
+
+    elif args.tune == "ws_wasserstein_cos":
+        if args.input.endswith(".yuv"):
+            raise argparse.ArgumentTypeError(
+                "--tune=ws_wasserstein_cos can not be used with YUV files. Use --tune=mse"
+            )
+        dist_weight = {"mse": 0.2, "ws_wasserstein_cos": 0.8 / 200}
+
     elif args.tune == "ws_mse":
         dist_weight = {"ws_mse": 1.0}
 
@@ -380,8 +396,8 @@ def get_preset_from_args(args: argparse.Namespace) -> dict[str, Any]:
     elif args.tune == "ws_ssim":
         K = 8.1e-3
         dist_weight = {
-            "ws_mse": 1.0 - args.alpha,
-            "ws_ssim": args.alpha * K,
+            "ws_mse": 0.5,
+            "ws_ssim": 0.5 * K,
         }
 
     else:

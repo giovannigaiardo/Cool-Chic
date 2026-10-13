@@ -7,6 +7,8 @@
 # Authors: see CONTRIBUTORS.md
 
 
+from enum import Flag, auto
+
 import torch
 import torch.nn.functional as F
 import torchvision
@@ -18,6 +20,24 @@ from torchvision.models.vgg import VGG16_Weights
 Code inspired by the Codex implementation of the Wasserstein Distance, available
 at: https://github.com/google/codex/blob/main/codex/loss/wasserstein.py
 """
+
+
+class SphericalMode(Flag):
+    """Which spherical (ERP) mechanisms are active in the Wasserstein distortion.
+
+    The two mechanisms are independent, so this is a ``Flag`` and they can be
+    combined. This enables a clean 2x2 ablation:
+
+        NONE           no spherical mechanism (constant log2_sigma + plain mean)
+        COSWEIGHT      only the cos(phi) spatial pooling weight
+        SIGMA          only the latitude-driven (equatorial-bias) log2_sigma map
+        BOTH           both mechanisms (SIGMA | COSWEIGHT)
+    """
+
+    NONE = 0
+    SIGMA = auto()
+    COSWEIGHT = auto()
+    BOTH = SIGMA | COSWEIGHT
 
 
 def safe_clamp_min(x: Tensor, min: float = 0.0) -> Tensor:
@@ -74,9 +94,10 @@ class Vgg16(torch.nn.Module):
 class WassersteinLoss(nn.Module):
     def __init__(
         self,
-        spherical: bool = False,
-        sigma_eq: float = 1.0,
-        sigma_pole: float = 4.0,
+        mode: SphericalMode = SphericalMode.NONE,
+        sigma_max: float = 4.0,
+        sigma_gaze_deg: float = 20.0,
+        p_min: float = 0.5,
     ):
         super().__init__()
         self.wd_net = Vgg16()
@@ -86,9 +107,10 @@ class WassersteinLoss(nn.Module):
         ).view(1, 1, 3, 3)
         self.target_features = None
 
-        self.spherical = spherical
-        self.sigma_eq = sigma_eq
-        self.sigma_pole = sigma_pole
+        self.mode = mode
+        self.sigma_max = sigma_max
+        self.sigma_gaze_deg = sigma_gaze_deg
+        self.p_min = p_min
 
     def to_device(self, device) -> None:
         self.wd_net = self.wd_net.to(device)
@@ -157,7 +179,7 @@ class WassersteinLoss(nn.Module):
                     f"Found feature arrays with incompatible sizes. A: {fa.size()}, B: {fb.size()}."
                 )
 
-            if self.spherical:
+            if SphericalMode.SIGMA in self.mode:
                 ls = self.latitude_log2_sigma(fa)
             else:
                 # For now: log2_sigma is constant
@@ -193,9 +215,24 @@ class WassersteinLoss(nn.Module):
         device, dtype = feature_array.device, feature_array.dtype
         # cos(phi) per row, shape (1, 1, fh, 1)
         j = torch.arange(fh, device=device, dtype=dtype)
-        cos_phi = torch.cos((j + 0.5 - fh / 2.0) * torch.pi / fh).view(1, 1, fh, 1)
-        sigma_rows = self.sigma_pole + (self.sigma_eq - self.sigma_pole) * cos_phi
-        return sigma_rows.expand(1, 1, fh, fw).contiguous()
+        phi = (j + 0.5 - fh / 2.0) * (torch.pi / fh)
+        cos_phi = torch.cos(phi)
+
+        sigma_gaze_rad = torch.tensor(
+            self.sigma_gaze_deg * torch.pi / 180.0, device=device, dtype=dtype
+        )
+        gaze_gaussian = torch.exp(-(phi**2) / (2.0 * sigma_gaze_rad**2))
+        s = cos_phi * gaze_gaussian
+
+        s_bar = torch.mean(s)
+        p = self.p_min + (1.0 - self.p_min) * (s / s_bar)
+
+        sigma = self.sigma_max * (self.p_min / p)
+
+        sigma = torch.clamp_min(sigma, min=1.0)
+        log2_sigma_rows = torch.log2(sigma)
+
+        return log2_sigma_rows.view(1, 1, fh, 1).expand(1, 1, fh, fw).contiguous()
 
     def wasserstein_distortion(
         self,
@@ -268,7 +305,16 @@ class WassersteinLoss(nn.Module):
             assert wd_map.size()[-2:] == log2_sigma.size()[-2:]
             weight = F.relu(1 - abs(log2_sigma - i))
             # intermediates["weights"].append(weight)
-            dist = dist + torch.mean(weight * wd_map)
+            if SphericalMode.COSWEIGHT in self.mode:
+                h_curr = wd_map.size(-2)
+                j = torch.arange(h_curr, device=wd_map.device, dtype=wd_map.dtype)
+                phi = (j + 0.5 - h_curr / 2.0) * (torch.pi / h_curr)
+                cos_phi = torch.cos(phi).view(1, 1, h_curr, 1)
+
+                cos_weight = cos_phi / torch.mean(cos_phi)
+                dist = dist + torch.mean(weight * wd_map * cos_weight)
+            else:
+                dist = dist + torch.mean(weight * wd_map)
 
             if i > 0:
                 log2_sigma = self.lowpass(log2_sigma, stride=2)
@@ -311,13 +357,16 @@ class WassersteinLoss(nn.Module):
         return means, variances
 
 
-# Global wasserstein_loss_module so that is is built only once
-wasserstein_loss_module = None
-wasserstein_loss_module_spherical = None
+# One WassersteinLoss module is built (and cached) per SphericalMode so that
+# the VGG network is instantiated only once per mode.
+_wasserstein_modules: dict["SphericalMode", "WassersteinLoss"] = {}
 
 
 def wasserstein_fn(
-    decoded_img: Tensor, target_img: Tensor, spherical: bool = False
+    decoded_img: Tensor,
+    target_img: Tensor,
+    spherical: bool = False,
+    mode: "SphericalMode | None" = None,
 ) -> Tensor:
     """Compute the wasserstein distance between two [1, 3, H, W] tensors.
     Dynamic range of the tensors is assumed to be [0., 1.]
@@ -325,27 +374,23 @@ def wasserstein_fn(
     Args:
         decoded_img: Compressed image
         target_img: Reference image
-        spherical: When True, use a latitude-driven ``log2_sigma`` map (ERP
-            spherical weighting) instead of a constant one.
+        spherical: Backward-compatible shortcut. When ``mode`` is not given,
+            ``spherical=True`` maps to ``SphericalMode.BOTH`` and
+            ``spherical=False`` maps to ``SphericalMode.NONE``.
+        mode: Which spherical (ERP) mechanisms to enable. Takes precedence over
+            ``spherical`` when provided. See :class:`SphericalMode`.
 
     Returns:
         Tensor: Wasserstein distance (scalar value).
     """
 
-    global wasserstein_loss_module, wasserstein_loss_module_spherical
+    if mode is None:
+        mode = SphericalMode.BOTH if spherical else SphericalMode.NONE
 
-    if spherical:
-        if wasserstein_loss_module_spherical is None:
-            wasserstein_loss_module_spherical = torch.compile(
-                WassersteinLoss(spherical=True), disable=True
-            )
-        module = wasserstein_loss_module_spherical
-    else:
-        if wasserstein_loss_module is None:
-            wasserstein_loss_module = torch.compile(
-                WassersteinLoss(spherical=False), disable=True
-            )
-        module = wasserstein_loss_module
+    module = _wasserstein_modules.get(mode)
+    if module is None:
+        module = torch.compile(WassersteinLoss(mode=mode), disable=True)
+        _wasserstein_modules[mode] = module
 
     if decoded_img.device != module.device:
         module.to_device(decoded_img.device)

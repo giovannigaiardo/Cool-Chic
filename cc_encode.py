@@ -8,6 +8,8 @@
 
 
 import os
+
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
 import sys
 import typing
 
@@ -122,7 +124,9 @@ if __name__ == "__main__":
         is_config_file=True,
         help="Residue (or intra) decoder config file",
     )
-    parser.add("--dec_cfg_motion", is_config_file=True, help="Motion decoded config file")
+    parser.add(
+        "--dec_cfg_motion", is_config_file=True, help="Motion decoded config file"
+    )
 
     # -------- These arguments are in the configuration files
 
@@ -345,6 +349,18 @@ if __name__ == "__main__":
         print(f"GPU: {name:20s} Mem: {total_memory:.0f}")
 
     args = parser.parse_args()
+    import random
+
+    import numpy as np
+
+    SEED = 42
+    random.seed(SEED)
+    np.random.seed(SEED)
+    torch.manual_seed(SEED)
+    torch.cuda.manual_seed_all(SEED)
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     print(args)
     print("----------")
     # useful for logging where different settings came from
@@ -386,7 +402,7 @@ if __name__ == "__main__":
 
     # Dump raw parameters into a text file to keep track
     with open(f"{frame_save_prefix}param.txt", "w") as f_out:
-        f_out.write(f"{str(args)}\n\n{parser.format_values()}")
+        f_out.write(f"{args!s}\n\n{parser.format_values()}")
 
     # Successively parse the Cool-chic architectures for the residue
     # and the motion Cool-chic
@@ -405,7 +421,9 @@ if __name__ == "__main__":
     preset = AVAILABLE_PRESETS.get(preset_name)(**preset_parameter)
 
     if os.path.exists(path_frame_encoder):
-        next_frame = coding_structure.get_frame_from_coding_order(frame.coding_order + 1)
+        next_frame = coding_structure.get_frame_from_coding_order(
+            frame.coding_order + 1
+        )
         msg = (
             f"Frame {frame.frame_type}{frame.display_order} is already done. "
             f"The resulting frame_encoder.pt is at "
@@ -449,13 +467,17 @@ if __name__ == "__main__":
         from coolchic.bitstream.decode import decode_video
         from coolchic.bitstream.encode import encode_frame
 
-        frame_enc_path = f"{_get_frame_path_prefix(frame.display_order)}frame_encoder.pt"
+        frame_enc_path = (
+            f"{_get_frame_path_prefix(frame.display_order)}frame_encoder.pt"
+        )
         frame_encoder = load_frame_encoder(frame_enc_path)
         print(f"\nWriting bitstream to {args.output}")
         bytes_frame = encode_frame(frame_encoder, args.output, coding_structure)
 
         name, ext = os.path.splitext(os.path.basename(args.input))
-        results_log_path = f"{_get_frame_path_prefix(frame.display_order)}results_decoder.tsv"
+        results_log_path = (
+            f"{_get_frame_path_prefix(frame.display_order)}results_decoder.tsv"
+        )
         print(f"\nDecoding the bitstream, logging the results into: {results_log_path}")
 
         all_decoded_frame = decode_video(

@@ -353,7 +353,7 @@ if __name__ == "__main__":
 
     import numpy as np
 
-    SEED = 42
+    SEED = int(os.environ.get("CC_SEED", "42"))
     random.seed(SEED)
     np.random.seed(SEED)
     torch.manual_seed(SEED)
